@@ -217,13 +217,8 @@ class CsvExtractor:
         except OSError as exc:
             raise ExtractorError(f"cannot read {path.name}: {exc}") from exc
 
-        # Heuristically pick a delimiter for comma-CSVs that use a
-        # non-standard separator. csv.Sniffer() is unreliable on tiny or
-        # single-column samples — it happily picks "l" out of a lone
-        # "hello" — so only honor a sniffed delimiter when it recurs
-        # consistently across several non-empty records and yields a
-        # stable, multi-column field count. Single-column data keeps the
-        # comma.
+        # Sniff only known separators; validate complete logical records so
+        # quoted delimiters/newlines and single-column files stay intact.
         if delimiter == "," and text:
             delimiter = _guess_delimiter(text)
 
@@ -252,25 +247,32 @@ class CsvExtractor:
 
 
 def _guess_delimiter(text: str) -> str:
-    """Pick a delimiter for a comma-delimited CSV that uses something else.
+    """Infer a stable separator, respecting quoted fields and logical records.
 
-    Only trusts a sniffed delimiter when it recurs consistently across
-    several non-empty records *and* every record splits into the same
-    multi-column field count. This keeps single-column data (and tiny
-    samples like a lone "hello") on the comma instead of having
-    ``csv.Sniffer`` invent a bogus separator.
+    Ambiguous unquoted input retains the historical semicolon/tab/pipe
+    preference. Quote evidence from Sniffer takes precedence, but every
+    candidate must produce at least two records of a consistent width.
     """
-    sample_lines = [ln for ln in text.splitlines() if ln.strip()]
-    if len(sample_lines) < 2:
-        return ","
-
-    candidates = [";", "\t", "|"]
-    for cand in candidates:
-        counts = {ln.count(cand) for ln in sample_lines}
-        if counts and min(counts) > 0 and len(counts) == 1:
-            return cand
-
+    candidates = [";", "\t", "|", ","]
+    if '"' in text:
+        try:
+            sniffed = csv.Sniffer().sniff(text, delimiters=",;\t|").delimiter
+            candidates.remove(sniffed)
+            candidates.insert(0, sniffed)
+        except csv.Error:
+            return ","
+    for candidate in candidates:
+        try:
+            rows = [row for row in csv.reader(
+                StringIO(text), delimiter=candidate, strict=True
+            ) if row]
+        except csv.Error:
+            continue
+        widths = {len(row) for row in rows}
+        if len(rows) >= 2 and len(widths) == 1 and next(iter(widths)) > 1:
+            return candidate
     return ","
+
 
 def _render_markdown_table(rows: list[list[str]]) -> str:
     """Render a 2-D list as a GitHub-flavored Markdown table."""

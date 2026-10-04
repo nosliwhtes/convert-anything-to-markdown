@@ -156,19 +156,25 @@ def convert_file(
                               `name (1).md`.
         dry_run:              Run detection + extraction but do not write output.
     """
-    path = path.expanduser().resolve()
-    if not path.is_file():
-        return ConversionOutcome(
-            source=path,
-            kind=FileKind.UNKNOWN,
-            ok=False,
-            error=f"file not found: {path}",
-        )
+    kind = FileKind.UNKNOWN
+    try:
+        path = path.expanduser().resolve()
+        if not path.is_file():
+            return ConversionOutcome(
+                source=path,
+                kind=FileKind.UNKNOWN,
+                ok=False,
+                error=f"file not found: {path}",
+            )
 
-    kind = detect_kind(path)
-    # Refine PDF kind using the scanned heuristic.
-    if kind == FileKind.PDF_TEXT and is_scanned_pdf(path):
-        kind = FileKind.PDF_SCANNED
+        kind = detect_kind(path)
+        # Refine PDF kind using the scanned heuristic.
+        if kind == FileKind.PDF_TEXT and is_scanned_pdf(path):
+            kind = FileKind.PDF_SCANNED
+    except OSError as exc:
+        return ConversionOutcome(
+            source=path, kind=kind, ok=False, error=f"cannot read input: {exc}",
+        )
 
     chain = _CHAINS.get(kind)
     if not chain:
@@ -231,24 +237,32 @@ def convert_file(
         fallback_chain=attempted,
     )
 
-    out_path = _pick_output_path(out_dir, path, overwrite=overwrite)
+    try:
+        out_path = _pick_output_path(out_dir, path, overwrite=overwrite)
 
-    body = result.markdown
-    if include_frontmatter:
-        header = build_frontmatter(
-            source=path,
-            engine=result.engine,
+        body = result.markdown
+        if include_frontmatter:
+            header = build_frontmatter(
+                source=path,
+                engine=result.engine,
+                fallback_chain=result.fallback_chain,
+                pages=result.page_count,
+                word_count=result.word_count,
+                duration_ms=result.duration_ms,
+                warnings=result.warnings,
+                extra=result.extra or None,
+            )
+            body = header + body
+
+        if not dry_run:
+            out_path.write_text(body, encoding="utf-8", newline="\n")
+    except OSError as exc:
+        return ConversionOutcome(
+            source=path, kind=kind, ok=False,
+            engine=result.engine, warnings=result.warnings,
             fallback_chain=result.fallback_chain,
-            pages=result.page_count,
-            word_count=result.word_count,
-            duration_ms=result.duration_ms,
-            warnings=result.warnings,
-            extra=result.extra or None,
+            error=f"cannot write output: {exc}",
         )
-        body = header + body
-
-    if not dry_run:
-        out_path.write_text(body, encoding="utf-8", newline="\n")
 
     return ConversionOutcome(
         source=path,
@@ -269,7 +283,16 @@ def convert_batch(
     **options,  # noqa: ANN003 - forwards to convert_file
 ) -> list[ConversionOutcome]:
     """Convert many files. Errors on one file never abort the rest."""
-    return [convert_file(p, **options) for p in paths]
+    outcomes = []
+    for path in paths:
+        try:
+            outcomes.append(convert_file(path, **options))
+        except OSError as exc:
+            outcomes.append(ConversionOutcome(
+                source=path, kind=FileKind.UNKNOWN, ok=False,
+                error=f"filesystem error: {exc}",
+            ))
+    return outcomes
 
 
 # ---------------------------------------------------------------------------

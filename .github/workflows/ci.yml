@@ -16,24 +16,39 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v10
 
       - name: Install dependencies
         working-directory: src
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --locked --extra dev
 
       - name: Lint
         working-directory: src
-        run: ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Test
         working-directory: src
-        run: pytest -ra -q
+        run: uv run --no-sync pytest -ra -q
+
+      - name: Build distributions
+        working-directory: src
+        run: uv run --no-sync python -m build --installer uv
+
+  ci:
+    name: CI
+    needs: [test]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every matrix job to pass
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success

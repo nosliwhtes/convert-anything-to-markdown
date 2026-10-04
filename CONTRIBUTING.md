@@ -10,17 +10,14 @@ basics of contributing code, reporting bugs, and suggesting new extractors.
 git clone https://github.com/nosliwhtes/convert-anything-to-markdown.git
 cd convert-anything-to-markdown
 
-# Install in development mode
+# Install the locked development environment
 cd src
-uv pip install --system -e .        # or: pip install -e .
-# Or use a venv:
-uv venv .venv && uv pip install -e .
+uv sync --locked --extra dev
 
-# Run tests
-pytest
-
-# Run linter
-ruff check .
+# Run offline tests, lint, and package builds
+uv run --no-sync pytest
+uv run --no-sync ruff check .
+uv run --no-sync python -m build --installer uv
 ```
 
 ## Project structure
@@ -161,3 +158,20 @@ Releases with auto-generated changelog notes.
 
 By contributing, you agree your contributions are licensed under the MIT
 license that covers this project.
+## Reproducible verification and dependency maintenance
+
+The development dependency graph is recorded in `src/uv.lock`. From `src/`,
+run `uv sync --locked --extra dev`, then `uv run --no-sync ruff check .`,
+`uv run --no-sync pytest -ra -q`, and `uv run --no-sync python -m build --installer uv`.
+CI uses these same commands. No static type checker is currently configured.
+To refresh compatible releases, use `uv lock --upgrade` and commit the
+lockfile together with any requirement changes.
+
+The Pillow minimum is 12.3.0 to include the fixes documented in the
+[upstream advisory](https://github.com/python-pillow/Pillow/security/advisories/GHSA-9hw9-ch79-4vh6);
+that release retains Python 3.10 support. EbookLib 0.20 is the tested EPUB
+baseline. CI uses current action majors on GitHub-hosted runners; consult the
+[checkout](https://github.com/actions/checkout/releases),
+[setup-python](https://github.com/actions/setup-python/releases), and
+[setup-uv](https://github.com/astral-sh/setup-uv/releases) migration notes before
+using older self-hosted runners.

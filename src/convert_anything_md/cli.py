@@ -23,6 +23,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
+from convert_anything_md.detect import FileKind
 from convert_anything_md.paths import desktop_dir
 from convert_anything_md.router import (
     EXTRACTOR_NAMES,
@@ -59,10 +60,6 @@ def main(argv: list[str] | None = None) -> int:
             "every supported file inside it, or use a glob like "
             f"'{d}/*.pdf'."
         )
-    if not paths:
-        if not missing and not directories:
-            _stderr("[error] no input files matched.")
-        return 2
 
     output_dir = (
         Path(args.output_dir).expanduser().resolve() if args.output_dir else None
@@ -75,6 +72,17 @@ def main(argv: list[str] | None = None) -> int:
         engine_override=args.engine,
         overwrite=args.overwrite,
         dry_run=args.dry_run,
+    )
+
+    outcomes.extend(
+        ConversionOutcome(source=Path(raw), kind=FileKind.UNKNOWN, ok=False,
+                          error=f"not found: {raw}")
+        for raw in missing
+    )
+    outcomes.extend(
+        ConversionOutcome(source=directory, kind=FileKind.UNKNOWN, ok=False,
+                          error=f"{directory} is a directory - pass --recursive")
+        for directory in directories
     )
 
     if args.json:
@@ -204,7 +212,6 @@ def _resolve_inputs(
     missing: list[str] = []
     directories: list[Path] = []
     seen: set[Path] = set()
-    cwd = Path.cwd()
 
     for raw in raw_paths:
         expanded = Path(raw).expanduser()
@@ -236,16 +243,6 @@ def _resolve_inputs(
                     Path(match_str), resolved, seen, directories, recursive
                 ) or matched_any
 
-            # Also try relative to CWD when the input was relative - covers
-            # multi-segment patterns whose `expanded` form does not exist
-            # but whose CWD-anchored form does.
-            if not expanded.is_absolute():
-                for match_str in sorted(
-                    glob.glob(str(cwd / raw), recursive=True)
-                ):
-                    matched_any = _absorb_match(
-                        Path(match_str), resolved, seen, directories, recursive
-                    ) or matched_any
 
         if not matched_any:
             missing.append(raw)
@@ -260,20 +257,17 @@ def _absorb_match(
     directories: list[Path],
     recursive: bool,
 ) -> bool:
-    """Helper: append `match` to the right bucket. Returns True if it
-    contributed any new file (so the caller can decide whether to mark
-    the raw glob as `missing`)."""
+    """Classify a glob match, returning True even when already collected."""
     if match.is_dir():
         if recursive:
-            before = len(resolved)
             _collect_directory_files(match, resolved, seen)
-            return len(resolved) > before
+            return True
         directories.append(match.resolve())
         return True
     if match.is_file():
         resolved_path = match.resolve()
         if resolved_path in seen:
-            return False
+            return True
         seen.add(resolved_path)
         resolved.append(resolved_path)
         return True

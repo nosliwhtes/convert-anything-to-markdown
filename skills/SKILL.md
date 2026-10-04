@@ -248,3 +248,15 @@ hint. Forward that hint to the user and offer to install Tesseract for them
   file-editing tools).
 * The user wants to convert Markdown **out** to another format like PDF
   or DOCX (that's a different tool — reach for `pandoc` directly).
+## Machine-readable failure handling
+
+Pass `--json` and an explicit `-o` directory for automation. Parse stdout as
+one JSON envelope, and read diagnostics from stderr separately. `summary.failed`
+includes missing paths, unmatched globs, directories requiring `--recursive`,
+and conversion/write failures. Exit status is 0 for all successes, 1 for mixed
+results, and 2 when nothing succeeds. Inspect each result's `ok` and `error`;
+a failed write has no successful `output` path. Repeated existing input files
+are deduplicated, including overlapping globs.
+
+`--dry-run` runs extraction; it is not an offline guarantee. Use text/CSV
+fixtures for offline checks. Engine overrides retain the fallback chain.
