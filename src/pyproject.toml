@@ -61,6 +61,7 @@ dependencies = [
     "striprtf>=0.0.27",             # RTF fallback when pandoc absent
     "pyyaml>=6.0",                  # Front-matter serialization
     "rich>=13.7.0",                 # Console progress + tables
+    "vobject>=0.9.0",               # VCF (vCard) file parsing
 ]
 
 [project.optional-dependencies]

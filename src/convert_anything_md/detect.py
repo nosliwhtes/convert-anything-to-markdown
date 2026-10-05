@@ -37,6 +37,7 @@ class FileKind(str, Enum):
     MARKDOWN = "markdown"
     PLAINTEXT = "plaintext"
     IMAGE = "image"                # PNG / JPG / JPEG / TIFF / BMP / WEBP
+    VCF = "vcf"                    # vCard
     UNKNOWN = "unknown"
 
 
@@ -81,6 +82,7 @@ _EXT_MAP: dict[str, FileKind] = {
     ".bmp": FileKind.IMAGE,
     ".webp": FileKind.IMAGE,
     ".gif": FileKind.IMAGE,
+    ".vcf": FileKind.VCF,
 }
 
 # Magic byte signatures for extension-less or mis-named files.

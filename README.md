@@ -77,6 +77,7 @@ convert-anything-md --json file.pdf
 | Markdown | .md, .markdown, .mdown | passthrough | — |
 | Plain text | .txt, .text, .log | passthrough | — |
 | Images | .png, .jpg, .jpeg, .tif, .tiff, .bmp, .webp, .gif | tesseract OCR | — |
+| vCard | .vcf | vobject | — |
 
 ## How it works
 
