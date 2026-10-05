@@ -157,3 +157,60 @@ def test_cli_write_failure_is_json(tmp_path, monkeypatch, capsys):
     assert envelope['summary']['failed'] == 1
     assert envelope['results'][0]['output'] is None
     assert 'disk full' in envelope['results'][0]['error']
+
+
+@pytest.mark.parametrize('contents', ['empty', 'unsupported', 'hidden', 'ignored'])
+@pytest.mark.parametrize('use_glob', [False, True])
+def test_recursive_no_eligible_files_emits_diagnostic(tmp_path, capsys, contents, use_glob):
+    directory = tmp_path / 'docs'
+    directory.mkdir()
+    if contents == 'unsupported':
+        (directory / 'data.xyz').write_text('unsupported')
+    elif contents == 'hidden':
+        (directory / '.note.txt').write_text('hidden')
+    elif contents == 'ignored':
+        ignored = directory / 'node_modules'
+        ignored.mkdir()
+        (ignored / 'note.txt').write_text('ignored')
+    source = str(tmp_path / 'doc*') if use_glob else str(directory)
+
+    assert main([source, '--recursive', '--json', '--dry-run']) == 2
+    captured = capsys.readouterr()
+    envelope = json.loads(captured.out)
+    assert envelope['summary'] == {'total': 0, 'succeeded': 0, 'failed': 0}
+    assert envelope['results'] == []
+    assert captured.err == '[error] no input files matched.\n'
+
+
+@pytest.mark.parametrize('use_glob', [False, True])
+def test_recursive_empty_input_alongside_valid_file_succeeds(tmp_path, capsys, use_glob):
+    directory = tmp_path / 'docs'
+    directory.mkdir()
+    (directory / 'data.xyz').write_text('unsupported')
+    good = tmp_path / 'good.txt'
+    good.write_text('hello')
+    source = str(tmp_path / 'doc*') if use_glob else str(directory)
+
+    assert main([source, str(good), '--recursive', '--json', '--dry-run']) == 0
+    captured = capsys.readouterr()
+    envelope = json.loads(captured.out)
+    assert envelope['summary'] == {'total': 1, 'succeeded': 1, 'failed': 0}
+    assert envelope['results'][0]['source'] == str(good)
+    assert captured.err == ''
+
+
+def test_recursive_overlapping_inputs_have_no_empty_diagnostic(tmp_path, capsys):
+    directory = tmp_path / 'docs'
+    directory.mkdir()
+    good = directory / 'good.txt'
+    good.write_text('hello')
+
+    assert main([
+        str(good), str(directory), str(tmp_path / 'doc*'),
+        '--recursive', '--json', '--dry-run',
+    ]) == 0
+    captured = capsys.readouterr()
+    envelope = json.loads(captured.out)
+    assert envelope['summary'] == {'total': 1, 'succeeded': 1, 'failed': 0}
+    assert len(envelope['results']) == 1
+    assert captured.err == ''
