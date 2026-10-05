@@ -25,7 +25,7 @@ class EpubExtractor:
 
     def extract(self, path: Path) -> ExtractionResult:
         try:
-            from ebooklib import epub
+            from ebooklib import ITEM_DOCUMENT, epub
         except ImportError as exc:
             raise ExtractorUnavailable("ebooklib is not installed") from exc
 
@@ -48,8 +48,6 @@ class EpubExtractor:
             parts.append(f"_by {author}_")
 
         chapter_count = 0
-        from ebooklib import ITEM_DOCUMENT
-
         warnings: list[str] = []
         items = []
         for idref, _linear in book.spine:
