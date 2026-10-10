@@ -51,6 +51,8 @@ def main(argv: list[str] | None = None) -> int:
     paths, missing, directories = _resolve_inputs(
         args.paths, recursive=args.recursive
     )
+    if not paths and not missing and not directories:
+        _stderr("[error] no input files matched.")
     if missing:
         for m in missing:
             _stderr(f"[error] not found: {m}")
