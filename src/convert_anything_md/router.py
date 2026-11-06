@@ -17,10 +17,12 @@ wins; if every extractor fails the outcome is marked failed.
 from __future__ import annotations
 
 import dataclasses
+import os
+import stat
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 
 from convert_anything_md.detect import FileKind, detect_kind, is_scanned_pdf
 from convert_anything_md.extractors.anydoc import AnyDocExtractor
@@ -373,19 +375,21 @@ def _write_output(out_dir: Path, source: Path, body: str, *, overwrite: bool) ->
         # Write through the securely created handle, then replace the entry.
         # Opening the destination with 'w' would follow symlinks (and truncate
         # existing content even if writing subsequently failed).
-        temp_path = None
+        # Preserve regular-file permissions without consulting a symlink target.
         try:
-            with NamedTemporaryFile(
-                mode="w", encoding="utf-8", newline="\n", dir=out_dir,
-                prefix=".cam-", suffix=".tmp", delete=False,
-            ) as stream:
-                temp_path = Path(stream.name)
+            existing = out_path.lstat()
+        except FileNotFoundError:
+            existing = None
+        # A private temporary directory gives us a safe staging name while
+        # normal file creation honors the process umask for new outputs.
+        with TemporaryDirectory(dir=out_dir, prefix=".cam-") as temp_dir:
+            temp_path = Path(temp_dir) / "output.md"
+            with temp_path.open("x", encoding="utf-8", newline="\n") as stream:
                 stream.write(body)
+            if existing is not None and stat.S_ISREG(existing.st_mode):
+                temp_path.chmod(stat.S_IMODE(existing.st_mode))
             # Windows requires the handle closed before rename.
             temp_path.replace(out_path)
-        finally:
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
         return out_path
 
     for out_path in output_candidates(out_dir, safe_stem(source)):
@@ -395,6 +399,12 @@ def _write_output(out_dir: Path, source: Path, body: str, *, overwrite: bool) ->
             stream = out_path.open("x", encoding="utf-8", newline="\n")
         except FileExistsError:
             continue
+        except PermissionError:
+            # Windows can report an existing directory as EACCES, not EEXIST.
+            # Only retry a confirmed collision; genuine access failures surface.
+            if os.path.lexists(out_path):
+                continue
+            raise
         # Retry only open collisions; write/close errors must fail the outcome.
         with stream:
             stream.write(body)

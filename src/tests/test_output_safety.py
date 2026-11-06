@@ -1,12 +1,13 @@
 """Output names must not follow links or clobber concurrent conversions."""
 
+import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
 import pytest
 
-import convert_anything_md.router as router
 from convert_anything_md.paths import conflict_safe_name
 from convert_anything_md.router import convert_file
 
@@ -175,14 +176,15 @@ def test_overwrite_failure_preserves_existing_output_and_cleans_up(tmp_path, mon
         raise OSError("disk full")
 
     if stage == "write":
-        original_tempfile = router.NamedTemporaryFile
+        original_open = Path.open
 
-        def failing_tempfile(*args, **kwargs):
-            stream = original_tempfile(*args, **kwargs)
-            stream.write = fail
+        def failing_open(path, mode="r", *args, **kwargs):
+            stream = original_open(path, mode, *args, **kwargs)
+            if mode == "x" and path.parent.name.startswith(".cam-"):
+                stream.write = fail
             return stream
 
-        monkeypatch.setattr(router, "NamedTemporaryFile", failing_tempfile)
+        monkeypatch.setattr(Path, "open", failing_open)
     else:
         monkeypatch.setattr(Path, "replace", fail)
 
@@ -237,3 +239,57 @@ def test_name_exhaustion_is_reported_as_failed_conversion(tmp_path, monkeypatch)
     assert result.output is None
     assert "no available output name" in result.error
     assert attempts == 10_000
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.parametrize("existing", [False, True])
+def test_overwrite_preserves_normal_output_permissions(tmp_path, existing):
+    source = tmp_path / "doc.txt"
+    source.write_text("replacement")
+    output = tmp_path / "out"
+    output.mkdir()
+    destination = output / "doc.md"
+    if existing:
+        destination.write_text("original")
+        destination.chmod(0o664)
+        expected_mode = 0o664
+    else:
+        # Compare normal creation under the current umask without changing it
+        # globally (which would race other writers).
+        control = output / "control.md"
+        control.write_text("control")
+        expected_mode = stat.S_IMODE(control.stat().st_mode)
+
+    result = convert_file(source, output_dir=output, overwrite=True)
+
+    assert result.ok, result.error
+    assert stat.S_IMODE(destination.stat().st_mode) == expected_mode
+
+
+@pytest.mark.parametrize("occupied", [False, True])
+def test_windows_directory_collision_does_not_hide_access_failures(tmp_path, monkeypatch, occupied):
+    source = tmp_path / "doc.txt"
+    source.write_text("text")
+    output = tmp_path / "out"
+    output.mkdir()
+    destination = output / "doc.md"
+    if occupied:
+        destination.mkdir()
+    original_open = Path.open
+
+    def windows_open(path, mode="r", *args, **kwargs):
+        if path == destination and mode == "x":
+            raise PermissionError("access denied")
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", windows_open)
+    result = convert_file(source, output_dir=output)
+
+    if occupied:
+        assert result.ok, result.error
+        assert result.output == output / "doc (1).md"
+        assert destination.is_dir()
+    else:
+        assert not result.ok
+        assert result.output is None
+        assert "access denied" in result.error

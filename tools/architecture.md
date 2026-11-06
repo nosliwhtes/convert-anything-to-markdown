@@ -82,8 +82,9 @@ from `output_candidates()` and retry collisions so concurrent conversions keep
 separate outputs. Exhausting the numbered names is a reported write failure.
 With `--overwrite`, the router writes a temporary file in the output directory
 and replaces the canonical output entry after closing it. An output symlink is
-replaced rather than followed; its target is untouched. These guarantees apply
-to output entries within a trusted destination directory, not to replacement of
+replaced rather than followed; its target is untouched. Regular-file permission
+bits are preserved on overwrite, and new outputs use normal creation permissions.
+These guarantees apply to output entries within a trusted destination directory, not to replacement of
 the directory or its ancestors by another process.
 
 ## Why lazy imports inside each extractor?
