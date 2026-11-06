@@ -4,11 +4,11 @@ Two responsibilities:
 
 1.  `desktop_dir()` finds the user's Desktop on macOS, Windows, and Linux
     (including distros where Desktop is localized or disabled via XDG).
-2.  `conflict_safe_name()` picks a non-colliding output filename using the
-    familiar `name.md`, `name (1).md`, `name (2).md` pattern - never
-    overwrites, never uses timestamp suffixes.
+2.  `output_candidates()` and `conflict_safe_name()` enumerate and preview
+    output filenames using the familiar `name.md`, `name (1).md`,
+    `name (2).md` pattern. Writers must claim names with exclusive creation.
 
-Both functions are pure and unit-testable in isolation.
+The helpers are unit-testable in isolation.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 
@@ -105,15 +106,23 @@ _COUNTER_SUFFIX = re.compile(r"^(.*) \((\d+)\)$")
 def conflict_safe_name(directory: Path, stem: str, ext: str = ".md") -> Path:
     """Return `directory/stem.ext` if free, else `stem (1).ext`, etc.
 
-    * Never overwrites an existing file.
+    * Treats every existing entry, including dangling symlinks, as occupied.
     * Uses the `(n)` increment convention familiar from macOS and Windows.
     * Strips an existing ` (n)` suffix from `stem` before counting so that
       re-running with a previous output doesn't produce ``foo (1) (1).md``.
     * `ext` must include the leading dot (or be ``""`` for no extension).
 
-    Safe against race conditions for single-process CLI usage. If strict
-    atomicity is needed, combine with an O_EXCL-style create in the caller.
+    This is only a preview, not a reservation. Writers must use exclusive
+    creation and retry collisions, since another writer may claim the name.
     """
+    for candidate in output_candidates(directory, stem, ext):
+        if not os.path.lexists(candidate):
+            return candidate
+    raise FileExistsError(f"no available output name for {stem}{ext} in {directory}")
+
+
+def output_candidates(directory: Path, stem: str, ext: str = ".md") -> Iterator[Path]:
+    """Yield the canonical name then numbered alternatives, up to 10,000 names."""
     if ext and not ext.startswith("."):
         ext = "." + ext
 
@@ -122,18 +131,11 @@ def conflict_safe_name(directory: Path, stem: str, ext: str = ".md") -> Path:
     if match:
         stem = match.group(1)
 
-    candidate = directory / f"{stem}{ext}"
-    if not candidate.exists():
-        return candidate
+    yield directory / f"{stem}{ext}"
 
     # Cap at 9999 to avoid pathological infinite loops.
     for i in range(1, 10_000):
-        candidate = directory / f"{stem} ({i}){ext}"
-        if not candidate.exists():
-            return candidate
-
-    # Absurdly unlikely fallback - use PID-based suffix.
-    return directory / f"{stem} ({os.getpid()}){ext}"
+        yield directory / f"{stem} ({i}){ext}"
 
 
 def ensure_dir(path: Path) -> Path:

@@ -17,9 +17,12 @@ wins; if every extractor fails the outcome is marked failed.
 from __future__ import annotations
 
 import dataclasses
+import os
+import stat
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from convert_anything_md.detect import FileKind, detect_kind, is_scanned_pdf
 from convert_anything_md.extractors.anydoc import AnyDocExtractor
@@ -56,6 +59,7 @@ from convert_anything_md.paths import (
     conflict_safe_name,
     desktop_dir,
     ensure_dir,
+    output_candidates,
     safe_stem,
 )
 
@@ -240,8 +244,6 @@ def convert_file(
     )
 
     try:
-        out_path = _pick_output_path(out_dir, path, overwrite=overwrite)
-
         body = result.markdown
         if include_frontmatter:
             header = build_frontmatter(
@@ -256,8 +258,10 @@ def convert_file(
             )
             body = header + body
 
-        if not dry_run:
-            out_path.write_text(body, encoding="utf-8", newline="\n")
+        if dry_run:
+            out_path = _pick_output_path(out_dir, path, overwrite=overwrite)
+        else:
+            out_path = _write_output(out_dir, path, body, overwrite=overwrite)
     except OSError as exc:
         return ConversionOutcome(
             source=path, kind=kind, ok=False,
@@ -362,6 +366,50 @@ def _reorder_for_override(
         f"engine override {override!r} is not applicable to this file kind "
         f"(applicable extractors: {chain_names}); falling back to default order"
     ]
+
+
+def _write_output(out_dir: Path, source: Path, body: str, *, overwrite: bool) -> Path:
+    """Claim a fresh name, or replace the destination entry without following it."""
+    if overwrite:
+        out_path = _pick_output_path(out_dir, source, overwrite=True)
+        # Write through the securely created handle, then replace the entry.
+        # Opening the destination with 'w' would follow symlinks (and truncate
+        # existing content even if writing subsequently failed).
+        # Preserve regular-file permissions without consulting a symlink target.
+        try:
+            existing = out_path.lstat()
+        except FileNotFoundError:
+            existing = None
+        # A private temporary directory gives us a safe staging name while
+        # normal file creation honors the process umask for new outputs.
+        with TemporaryDirectory(dir=out_dir, prefix=".cam-") as temp_dir:
+            temp_path = Path(temp_dir) / "output.md"
+            with temp_path.open("x", encoding="utf-8", newline="\n") as stream:
+                stream.write(body)
+            if existing is not None and stat.S_ISREG(existing.st_mode):
+                temp_path.chmod(stat.S_IMODE(existing.st_mode))
+            # Windows requires the handle closed before rename.
+            temp_path.replace(out_path)
+        return out_path
+
+    for out_path in output_candidates(out_dir, safe_stem(source)):
+        try:
+            # O_CREAT | O_EXCL rejects all existing entries, including dangling
+            # symlinks and files claimed by another conversion in the meantime.
+            stream = out_path.open("x", encoding="utf-8", newline="\n")
+        except FileExistsError:
+            continue
+        except PermissionError:
+            # Windows can report an existing directory as EACCES, not EEXIST.
+            # Only retry a confirmed collision; genuine access failures surface.
+            if os.path.lexists(out_path):
+                continue
+            raise
+        # Retry only open collisions; write/close errors must fail the outcome.
+        with stream:
+            stream.write(body)
+        return out_path
+    raise FileExistsError(f"no available output name for {source.name} in {out_dir}")
 
 
 def _pick_output_path(out_dir: Path, source: Path, *, overwrite: bool) -> Path:

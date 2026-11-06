@@ -76,6 +76,17 @@ needing three CI runners. `conflict_safe_name()` is also a popular
 reimplementation target — isolating it makes it easy to swap the
 strategy (timestamp? UUID? lockfile?) if users ever ask.
 
+`conflict_safe_name()` is a preview for dry runs: existing entries, including
+dangling symlinks, occupy a name. Actual writes exclusively create candidates
+from `output_candidates()` and retry collisions so concurrent conversions keep
+separate outputs. Exhausting the numbered names is a reported write failure.
+With `--overwrite`, the router writes a temporary file in the output directory
+and replaces the canonical output entry after closing it. An output symlink is
+replaced rather than followed; its target is untouched. Regular-file permission
+bits are preserved on overwrite, and new outputs use normal creation permissions.
+These guarantees apply to output entries within a trusted destination directory, not to replacement of
+the directory or its ancestors by another process.
+
 ## Why lazy imports inside each extractor?
 
 A fresh `python -m convert_anything_md` invocation takes ~200 ms on a

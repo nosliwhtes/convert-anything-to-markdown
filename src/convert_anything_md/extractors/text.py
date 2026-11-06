@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
@@ -32,7 +33,10 @@ class PlainTextExtractor:
         except OSError as exc:
             raise ExtractorError(f"cannot read {path.name}: {exc}") from exc
 
-        markdown = f"# {path.stem}\n\n```\n{text.rstrip()}\n```\n"
+        # A source backtick run must never close the surrounding code block.
+        longest_run = max((len(match[0]) for match in re.finditer(r"`+", text)), default=0)
+        fence = "`" * max(3, longest_run + 1)
+        markdown = f"# {path.stem}\n\n{fence}\n{text.rstrip()}\n{fence}\n"
         duration_ms = int((time.perf_counter() - start) * 1000)
         return ExtractionResult(
             markdown=markdown,
