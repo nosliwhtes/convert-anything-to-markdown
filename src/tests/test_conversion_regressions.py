@@ -37,21 +37,21 @@ def test_output_filesystem_failure_continues_batch(tmp_path, monkeypatch, stage)
     bad.write_text('bad')
     good.write_text('good')
     if stage == 'write':
-        original = Path.write_text
+        original = Path.open
 
-        def write(path, *args, **kwargs):
-            if path.name == 'bad.md':
+        def write(path, mode='r', *args, **kwargs):
+            if path.name == 'bad.md' and mode == 'x':
                 raise PermissionError('write denied')
-            return original(path, *args, **kwargs)
-        monkeypatch.setattr(Path, 'write_text', write)
+            return original(path, mode, *args, **kwargs)
+        monkeypatch.setattr(Path, 'open', write)
     elif stage == 'pick':
-        original = router._pick_output_path
+        original = router.output_candidates
 
-        def pick(out_dir, source, **kwargs):
-            if source == bad:
+        def pick(out_dir, stem, **kwargs):
+            if stem == 'bad':
                 raise OSError('cannot stat output')
-            return original(out_dir, source, **kwargs)
-        monkeypatch.setattr(router, '_pick_output_path', pick)
+            return original(out_dir, stem, **kwargs)
+        monkeypatch.setattr(router, 'output_candidates', pick)
     else:
         original = router.build_frontmatter
 
@@ -149,9 +149,13 @@ def test_cli_write_failure_is_json(tmp_path, monkeypatch, capsys):
     source = tmp_path / 'note.txt'
     source.write_text('hello')
 
-    def fail_write(*args, **kwargs):
-        raise OSError('disk full')
-    monkeypatch.setattr(Path, 'write_text', fail_write)
+    original = Path.open
+
+    def fail_write(path, mode='r', *args, **kwargs):
+        if mode == 'x':
+            raise OSError('disk full')
+        return original(path, mode, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', fail_write)
     assert main([str(source), '--json', '-o', str(tmp_path / 'out')]) == 2
     envelope = json.loads(capsys.readouterr().out)
     assert envelope['summary']['failed'] == 1
